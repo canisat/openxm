@@ -1,0 +1,7 @@
+[DEFAULT]
+BASEURL=http://localhost/cgi-bin/xm.cgi
+[InternetShortcut]
+URL=http://localhost/cgi-bin/xm.cgi
+Modified=60197C26F3DFC301B1
+IconIndex=116
+IconFile=C:\WINDOWS\system32\SHELL32.dll

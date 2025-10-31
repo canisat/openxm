@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+#
+# XMClient v1.0 - Basic Client used to control an XM PCR Radio.
+#
+# XMClient Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+#
+# XMClient is part of the OpenXM Package.
+# OpenXM Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+# OpenXM is a set of Perl scripts used to interface the XMPCR XM Radio
+# Receiver.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+
+my $host = 'localhost';
+my $port = '3877';
+
+use IO::Socket::INET;
+
+my $buf = $ARGV[0];
+
+my $sock = IO::Socket::INET->new(
+	   PeerAddr => $host,
+           PeerPort => $port,
+	      Proto => 'tcp',
+	       Type => SOCK_STREAM,
+            Timeout => 15);
+
+die "Client failed to connect" unless $sock ;
+
+print $sock "$buf\n";
+my $answer = <$sock>;
+$answer =~ s/\|/\n/g;
+print "Ans: $answer";
+close($sock);

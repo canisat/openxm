@@ -1,0 +1,102 @@
+#!/usr/bin/perl
+
+# WhatsOn v0.1 - Creates a Website showing whats on all the XM Chans.
+#
+# Copyright (C) 2003 Christopher J. Carlson <c@rlson.net>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+#
+# Changelog:
+# 
+# 2003-06-20:   Initial Release
+#
+
+use strict;
+use XMPCR;
+
+my $basedir = '/var/www/xm';
+my $port = '/dev/ttyUSB0';
+my $color1 = 'white';
+my $color2 = 'lightgrey';
+
+my $note = qq(
+
+Note:  This is a webpage strictly devoted to demonstrating the functionality of being able to use the
+XMPCR.pm perl module to list all songs/artists that are currently playing on XM Radio.  This page is
+not affiliated with XM Radio in any way.  It is for demonstration purposes only and under most circumstances
+the data will be very outdated.  After all, I can either be listening to XM, or be updating this page.
+Currently I have no intention of being able to do both.  This is not a high bandwidth server.  I do not have
+the resources to handle this type of function.
+<br><br>
+For more information, or to download the script, visit the linuXMPCR download page at http://beerboys.com/XMPCR/.
+
+);
+
+my $radio = XMPCR->new(port => $port);
+
+$radio->power_on;
+
+while (1) {
+   $radio->get_all(remove_white_spaces => 1);
+
+   open (FH, ">$basedir/index.html");
+
+   print FH "<html>\n";
+   print FH "<body bgcolor='white' link='black' vlink='black'>\n";
+   print FH "Last Updated: ", scalar(localtime), " CDT<br>\n";
+
+   print FH "<br><br>\n";
+   print FH "$note";
+   print FH "<br><br>\n";
+
+   print FH "<table cellspacing='8'>\n";
+   print FH "<tr>\n";
+   print FH "<th>Chanel</th><th>Name</th><th>Category</th><th>Artist</th><th>Song</th>\n";
+   print FH "</tr>\n";
+
+   my $x = 0; my $bgcolor;
+
+   my @sorted_chans = sort { $a <=> $b } (keys %{$radio->{ChanList}});
+
+   foreach my $key (@sorted_chans) {
+      next if ($key <= 1);
+      
+      if ($x % 2) { $bgcolor = $color1; } else { $bgcolor = $color2; }
+      my $cat = $radio->{ChanList}->{$key}->{ChanCategory};
+      $cat =~ s/&/_and_/;
+      
+      my $song = $radio->{ChanList}->{$key}->{SongName};
+      $song =~ s/ /+/g;
+
+      my $artist = $radio->{ChanList}->{$key}->{Artist};
+      $artist =~ s/ /+/g;
+
+      print FH "<tr bgcolor='$bgcolor'>\n";
+      print FH "<td><a target='new' href='http://xmradio.com/programming/channel_page.jsp?ch=$key'>$key</a></td>";
+      print FH "<td><a target='new' href='http://xmradio.com/programming/channel_page.jsp?ch=$key'>$radio->{ChanList}->{$key}->{ChanName}</a></td>";
+      print FH "<td><a target='new' href='http://xmradio.com/programming/neighborhood.jsp?hood=$cat'>$radio->{ChanList}->{$key}->{ChanCategory}</a></td>";
+      print FH "<td><a target='new' href='http://freedb.org/freedb_search.php?words=$artist&allfields=NO&fields=artist&allcats=YES&grouping=none'>$radio->{ChanList}->{$key}->{Artist}</a></td>";
+      print FH "<td><a target='new' href='http://freedb.org/freedb_search.php?words=$song&allfields=NO&fields=title&allcats=YES&grouping=none'>$radio->{ChanList}->{$key}->{SongName}</a></td>";
+      print FH "</tr>\n";
+      $x++;
+   }
+   print FH "</table>\n";
+   print FH "</html>\n";
+
+   close (FH);
+
+   sleep(30);
+}

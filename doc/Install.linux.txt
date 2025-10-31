@@ -1,0 +1,95 @@
+Linux/*NIX Platform Install Instructions:
+
+	First off, you will need to make sure your Kernel is compiled
+	with the following options:
+	
+	* Support for USB
+	* Preliminary USB device filesystem
+	* Your USB Host Controller Driver
+	  (You will need to figgure out the one that works on your system)
+	USB Serial Converter Support
+	   * USB Generic Serial Driver 
+	   * FTDI Single Port Serial Driver
+	
+	Then, you will need to make sure your USB Device Files are Created.
+	Use mknod to create the following devices.  If you need more, just
+	make them with incrementing minor numbers.
+	
+	$ mknod /dev/ttyUSB0 c 188 0 
+	$ mknod /dev/ttyUSB1 c 188 1 
+	$ mknod /dev/ttyUSB2 c 188 2 
+	
+	Execute the following:
+	
+	$ ls -l /dev/ttyUSB*
+	
+	It should print this:
+	
+	crw-r--r--    1 root     root     188,   0 Jun  5 09:23 ttyUSB0
+	crw-r--r--    1 root     root     188,   1 Jun  5 09:23 ttyUSB1
+	crw-r--r--    1 root     root     188,   2 Jun  5 09:23 ttyUSB2
+	
+	You will want to make the devices writable by unprivileged users
+	if you wish to run the program while not logged in as root.
+	
+	$ chmod 666 /dev/ttyUSB0
+	$ chmod 666 /dev/ttyUSB1
+	$ chmod 666 /dev/ttyUSB2
+	
+	Reboot your system, install the modules if needed and grep dmesg
+	for the folowing text:
+	
+	$ dmesg |grep FTDI
+	
+	usbserial.c: USB Serial support registered for FTDI SIO
+	usbserial.c: USB Serial support registered for FTDI 8U232AM
+	usbserial.c: FTDI 8U232AM converter detected
+	usbserial.c: FTDI 8U232AM converter now attached to ttyUSB0 (or usb/tts/0 for devfs)
+	ftdi_sio.c: v1.2.1:USB FTDI Serial Converters Driver
+	
+	Note which device the converter attaches to.  If you don't get 
+	this message, try unplugging the XMPCR, and plugging it back in, 
+	and regrep the dmesg.
+	
+	Once you know this device, you will be able to modify the XM2 file
+	and get your unit working.  Open the file and scroll down until
+	you find the following line:
+	
+	my $radio = XMPCR->new(port => '/dev/ttyUSB0');
+	
+	change the port to the port listed in the dmesg, and you should
+	be good to go.
+
+	
+Running The Program:
+--------------------------------------------------------------------------------
+
+You should be able to run the program by executing ./ShellXM.  If it fails, check
+the perl interpeter in the first line of the program and change as needed. 
+
+It should power on the radio and tune to channel 1.  Type 'H' to see the commands
+available to you.  Good Luck!
+
+Please make sure you can get ShellXM running before trying the Client/Daemon Install.
+
+1) Move xm.cgi & sleep.cgi to your webserver cgi-bin directory or other dir you
+   can run scripts from.  Modify the script for your favorite channels by editing
+   the @favorites line.  Add channels with coma's seperating the channels.  Update
+   the $host variable by entering your computers host name.  Modify the Port if
+   needed.  Copy the PNG's to your webservers base directory.
+
+   If you want to use XMTracker with the Web Client, move XMTracker.pm into your
+   cgi-bin directory also.
+
+2) Update XMDaemon.  Change $allowed_ips to your webservers IP.  This is for
+   authentication with xm.cgi.  Change the host to your hostname.  Change the
+   $server_port if needed.
+   
+   $allowed_ips format:  my $allowd_ips = '(IP1|IP2|IP3|...)';
+
+3) Run XMDaemon.  It should start up and give some logging notes.  Try to load
+   xm.cgi on your webserver.  If all works out, you should see the button to turn
+   the unit on.  If things do not work, check the logs.  it's probably an IP 
+   thing =).
+
+-cjc

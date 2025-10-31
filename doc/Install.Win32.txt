@@ -1,0 +1,70 @@
++------------------------------------------+
+| Install Instructions for Win32 Platforms |
++------------------------------------------+
+
+You will need to download ActiveState's version of ActivePerl from:
+http://www.activestate.com/Products/ActivePerl/
+
+After getting it installed, you will need a few modules:
+	Win32-API
+	TermReadKey
+	Win32::SerialPort
+	LWP::Simple (If you use XMTracker Module)
+	
+The first two are easy.  You can install them by going to a command prompt
+and typing:
+	'ppm install Win32-API'
+	
+This should go and fetch the files and install them.
+After this, enter:
+	'ppm install TermReadKey'
+	
+Now you should have these two installed, last you will need
+to get Win32::SerialPort.  This one is a bit trickier.
+	
+The ZIP file is located in the 'extras' directory.
+You can unzip this into a directory of your choice.  Enter the directory
+and run the following commands:
+	
+	perl Makefile.PL
+	perl install.pl
+	
+This should install the files.  Don't worry about perl test, some of the tests
+will fail and that is expected.
+	
+Once you have these files installed, you should be able to run ShellXM without any
+problems.
+	
+Running The Program:
+--------------------------------------------------------------------------------
+
+You should be able to run the program by executing 
+	perl ShellXM
+
+It should power on the radio and tune to channel 1.  Type 'H' to see the commands
+available to you.  Good Luck!
+
+Please make sure you can get ShellXM running before trying the Client/Daemon Install.
+
+1) Move xm.cgi & sleep.cgi to your webserver cgi-bin directory or any other directory
+   that you can execute scripts from.  Modify the script for your favorite channels by 
+   editing the @favorites line in xm.cgi.  Add channels with comas seperating the 
+   channels.  Update the $host variable by entering your computers host name.  This can
+   be left as localhost for most installs.  If you are unsure, leave it.  Modify the Port 
+   if needed (again, unnecessary under most circumstances).  Copy the PNG graphics to your 
+   webservers base directory.
+
+   If you want to use XMTracker with the Web Client, copy XMTracker.pm into your
+   cgi-bin directory also.
+
+2) Update XMDaemon.  Change $allowed_ips to your webservers IP.  This is for
+   authentication with xm.cgi.  Change the $server_port if needed.
+   
+   $allowed_ips format:  my $allowd_ips = '(IP1|IP2|IP3|...)';
+
+3) Run XMDaemon.  It should start up and give some logging notes.  Try to load
+   xm.cgi on your webserver.  If all works out, you should see the button to turn
+   the unit on.  If things do not work, check the logs.  it's probably an IP 
+   thing =).
+
+-cjc

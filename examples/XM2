@@ -1,0 +1,440 @@
+#!/usr/bin/perl
+
+# XM2 v1.0 - Console interface used to control an XM PCR Radio.
+#
+# XM2 Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+#
+# XM2 is part of the OpenXM Package.
+# OpenXM Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+# OpenXM is a set of Perl scripts used to interface the XMPCR XM Radio
+# Receiver.  
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+#
+# Changelog:
+#
+# 2003-12-18: Changes to make it work under Windows.
+#
+# 2003-08-08: A few changes used to create webpages.  Development will
+#             slowly come to a halt for this app in favor of the new
+#             client/daemon method.
+#
+# 2003-06-10: Changed the configuration file to be wrote/read from the 
+#             users home directory rather than the directory you run
+#             the program from.
+#
+# 2003-06-14: Changed letters to ord value to ease menu options.  I hope
+#             to be able to make it so users can use up arrow and down
+#             arrow to navigate menu.  Much harder than originally thought.
+#
+# 2003-06-24: Added Mute Capibilities.  Pulled Stupid Chanlist.  The
+#             startup takes longer initially, but will be faster after
+#             the Cache list is created.  Added Website Creation in this
+#             script.  Enable below if you want it.  You can rebuild the
+#             cache using the C to clear it.  All in Help.
+#
+
+# Enter the Port for the XMPCR
+#   UNIX example:    /dev/ttyUSB0
+#   Windows example: COM5
+
+my $port = 'COM5';
+
+use strict;
+use Term::ReadKey;
+use XMPCR;
+
+my $is_windows;
+
+if ($^O =~ /Win32/) {
+    $is_windows = 1;
+} else {
+    $is_windows = 0;
+}
+
+# --------------------------
+
+# This is a new function that will create a webpage of what is currently
+# playing at the interval specified.  Note, when the page is updating...
+# you can not issue commands.  It takes about 10-15 seconds to complete.
+# Therefore, make sure you set a decent update interval. 
+
+my $create_now_playing = 0;	# Change to 1 to Enable
+my $create_only_current = 1;
+my $creation_interval = 60;	# Seconds
+my $web_root = '/var/www/xm';
+my $color1 = 'white';
+my $color2 = 'lightgrey';
+
+# ---------------------------
+
+$|++;
+
+sub printMenu {
+   my $radio = shift;  
+
+   my $spc = (17 - length($radio->{CurrentChannel}));
+
+   if ($is_windows) {
+      system('cls');
+      #system("title $radio->{Artist} : $radio->{Song}"); # Not Tested
+   } else {
+      system('clear');
+   }
+   print "+","-"x35,"+\n";
+   print "|"," "x6,"XM PCR RADIO INTERFACE"," "x7,"|\n";
+   print "+","-"x35,"+\n";
+   print "| Channel Number:  $radio->{CurrentChannel}"," "x$spc,"|\n"
+            if $radio->{CurrentChannel} =~ m/\w/;;
+   print "| Station Name:    $radio->{StationName} |\n"
+            if $radio->{StationName} =~ m/\w/;
+   print "| Current Artist:  $radio->{Artist} |\n"
+            if $radio->{Artist} =~ m/\w/;
+   print "| Current Song:    $radio->{Song} |\n"
+            if $radio->{Song} =~ m/\w/;
+   print "|"," "x14, "<<MUTE>>"," "x13,"|\n"
+           if ($radio->{Mute} eq 'On');
+   print "+","-"x35,"+\n";
+   print "Press 'H' For Help\n";
+   print "\n>";
+}
+
+sub chanInfo {
+   my $radio = shift;
+   my $chan = shift;
+
+   my $spc = (17 - length($radio->{CurrentChannel}));
+   $radio->chan_info(channel => $chan);
+
+   system('clear');
+   print "+","-"x35,"+\n";
+   print "|"," "x13,"Whats On?"," "x13,"|\n";
+   print "+","-"x35,"+\n";
+   print "| Channel Number:  $chan"," "x$spc,"|\n"
+            if $radio->{CurrentChannel} =~ m/\w/;;
+   print "| Station Name:    $radio->{StationName} |\n"
+            if $radio->{StationName} =~ m/\w/;
+   print "| Current Artist:  $radio->{Artist}  |\n"
+            if $radio->{Artist} =~ m/\w/;
+   print "| Current Song:    $radio->{Song} |\n"
+            if $radio->{Song} =~ m/\w/;
+   print "+","-"x35,"+\n";
+
+   $radio->chan_info();
+
+   print "Press Enter To Continue ";
+   my $a = <STDIN>;
+   return;
+}
+   
+
+sub print_help {
+   my $radio = shift;
+
+   system('clear');
+   print "+","-"x35,"+\n";
+   print "|    XM PCR RADIO INTERFACE HELP    |\n";
+   print "+","-"x35,"+\n";
+   print "| * RadioID = $radio->{RadioID}"," "x14,"|\n";
+   print "|"," "x35,"|\n";
+   print "| R: Refresh Information"," "x12,"|\n";
+   print "| S: Sleep Function"," "x17,"|\n";
+   print "| W: What's On Channel..."," "x11,"|\n";
+   print "| X: Technical Specs"," "x16,"|\n";
+   print "| M: Toggle Mute"," "x20,"|\n";
+   print "| C: Rebuild Channel Cache"," "x10,"|\n";
+   print "| H: This Help Screen"," "x15,"|\n";
+   print "|"," "x35,"|\n";
+   print "| T: Tune A Station"," "x17,"|\n";
+   print "| A: Tune Station 1 Up"," "x14,"|\n";
+   print "| Z: Tune Station 1 Down"," "x12,"|\n";
+   print "|"," "x35,"|\n";
+   print "| Q: Quit Program"," "x19,"|\n";
+   print "+","-"x35,"+\n";
+
+   print "\nPress Enter To Return ";
+   my $a = <STDIN>;
+}
+
+sub gotosleep {
+   my $radio = shift;
+   my $count = shift;
+   $|++;
+   system('clear');
+   print "\nXM PCR RADIO INTERFACE SLEEP\n";
+   print "\n";
+
+   $count = $count * 60;
+
+   while ($count > 0) {
+      my $minutes = sprintf("%02d", $count/60);
+      my $seconds = sprintf("%02d", $count - ($minutes * 60));
+      print "Sleep In: $minutes:$seconds";
+      $count--;
+      sleep(1);
+      print "\b"x15;
+   }
+   $radio->power_off;
+   print "\n";
+   exit(0);
+}
+
+my $radio = XMPCR->new(port => $port);
+
+my $lastchan = 1;
+
+if (-e "$ENV{HOME}/.XM") {
+   open (FH, "$ENV{HOME}/.XM");
+   while (<FH>) {
+      if ($_ =~ m/^LastChannel:(\d+)/) {
+         $lastchan = $1;
+      }
+   }
+   close(FH);
+}
+
+ReadMode 4;
+
+print "Powering On Radio.  Please Wait...\n";
+$radio->power_on;
+
+if (-e "$ENV{HOME}/.XM_Chan_Cache") {
+   open (FH, "$ENV{HOME}/.XM_Chan_Cache");
+   print "Loading Chanlist from Cache\n";
+   while (<FH>) {
+      chomp;
+      $radio->{ChanList}->{$_}->{Valid} = 1;
+   }
+} else {
+   print "No Cache Found. Fetching Channel Information.  Please Wait...\n";
+   $radio->get_all;
+}
+print "Tuning Channel $lastchan\n";
+$radio->change_channel(channel => $lastchan);
+
+my $x = 0; my $old_song;
+
+MENU:
+
+printMenu($radio);
+
+my $char;
+ReadMode('cbreak');
+while (1) {
+   $char = ReadKey(.5);
+   last if defined $char;
+   $x++;
+
+   unless ($x % 5) {
+      $radio->chan_info;
+
+      if ($old_song ne $radio->{Song}) {
+         $old_song = $radio->{Song};
+         goto MENU;
+      }
+      $old_song = $radio->{Song};
+   }
+
+   my $interval = $creation_interval * 2;
+
+   unless ($x % $interval || not ($create_now_playing)) {
+      print " Creating Website... Please Wait.\n";
+      $radio->get_all(remove_white_spaces => 1);
+      open (FH, ">$web_root/index.html");
+
+      print FH "<html>\n";
+      print FH "<body bgcolor='white' link='black' vlink='black'>\n";
+      print FH "Last Updated: ", scalar(localtime), " CDT<br>\n";
+
+      print FH "<table cellspacing='8'>\n";
+      print FH "<tr>\n";
+      print FH "<th>Chanel</th><th>Name</th><th>Category</th><th>Artist</th><th>Song</th>\n";
+      print FH "</tr>\n";
+
+      my $x = 0; my $bgcolor;
+
+      my @sorted_chans = sort { $a <=> $b } (keys %{$radio->{ChanList}});
+
+      foreach my $key (@sorted_chans) {
+         next if ($key <= 1);
+      
+         if ($x % 2) { $bgcolor = $color1; } else { $bgcolor = $color2; }
+         my $cat = $radio->{ChanList}->{$key}->{ChanCategory};
+         $cat =~ s/&/_and_/;
+      
+         my $song = $radio->{ChanList}->{$key}->{SongName};
+         $song =~ s/ /+/g;
+
+         my $artist = $radio->{ChanList}->{$key}->{Artist};
+         $artist =~ s/ /+/g;
+
+         print FH "<tr bgcolor='$bgcolor'>\n";
+         print FH "<td><a target='new' href='http://xmradio.com/programming/channel_page.jsp?ch=$key'>$key</a></td>";
+         print FH "<td><a target='new' href='http://xmradio.com/programming/channel_page.jsp?ch=$key'>$radio->{ChanList}->{$key}->{ChanName}</a></td>";
+         print FH "<td><a target='new' href='http://xmradio.com/programming/neighborhood.jsp?hood=$cat'>$radio->{ChanList}->{$key}->{ChanCategory}</a></td>";
+         print FH "<td><a target='new' href='http://freedb.org/freedb_search.php?words=$artist&allfields=NO&fields=artist&allcats=YES&grouping=none'>$radio->{ChanList}->{$key}->{Artist}</a></td>";
+         print FH "<td><a target='new' href='http://freedb.org/freedb_search.php?words=$song&allfields=NO&fields=title&allcats=YES&grouping=none'>$radio->{ChanList}->{$key}->{SongName}</a></td>";
+         print FH "</tr>\n";
+         $x++;
+      }
+      print FH "</table>\n";
+      print FH "</html>\n";
+
+      close (FH);
+      goto MENU;
+   }
+
+   unless ($x % 10 || not ($create_only_current)) {
+      $radio->chan_info(remove_white_spaces => 1);
+      open (FH, ">$web_root/index.html");
+
+      print FH "<html>\n";
+
+      print FH "<head><meta http-equiv='refresh' content='10;URL=http://beerboys.com/xm'></head>\n";
+
+      print FH "<body bgcolor='black' link='black' vlink='black'>\n";
+
+      print FH "<center>\n";
+      print FH "<TABLE BORDER CELLPADDING='5'><TR BGCOLOR='RED'><TD>\n";
+
+
+      print FH "<table bgcolor='lightgrey' cellspacing='8'>\n";
+
+      print FH "<tr><td><font size='+2'>Channel Number: </td>
+                    <td><font size='+2'>$radio->{CurrentChannel}</td></tr>\n";
+      print FH "<tr><td><font size='+2'>Channel Name: </td>
+                    <td><font size='+2'>$radio->{StationName}</td></tr>\n";
+      print FH "<tr><td><font size='+2'>Artist: </td>
+                    <td><font size='+2'>$radio->{Artist}</td></tr>\n";
+      print FH "<tr><td><font size='+2'>Song: </td>
+                    <td><font size='+2'>$radio->{Song}</td></tr>\n";
+
+      print FH "<tr><th colspan='2'>Last Updated: ", scalar(localtime), " CDT</th></tr>\n";
+
+      print FH "</table>\n";
+      print FH "</TD></TR></TABLE>\n";
+      close (FH);
+      goto MENU;
+
+   } 
+
+
+
+}
+
+ReadMode 'normal';
+
+$char = ord(uc($char));
+
+if ($char == 84) {	# T
+   print "\b* Station Number: ";
+   chomp(my $station = <STDIN>);
+   $radio->change_channel(channel => $station);
+}
+
+elsif ($char == 82) {	# R
+   $radio->chan_info;
+}
+elsif ($char == 65) {	# A
+   $radio->channel_up;
+}
+elsif ($char == 90) {	# Z
+   $radio->channel_down;
+}
+elsif ($char == 72) {	# H
+   print_help($radio);
+}
+elsif ($char == 77) {   # M
+   if ($radio->{Mute} eq 'On') {
+      $radio->mute_off;
+   } else {
+      $radio->mute_on;
+   }
+}
+
+elsif ($char == 83) {	# S
+   print "\b* How Many Minutes To Sleep: ";
+   chomp(my $count = <STDIN>);
+   print "Count: $count\n";
+   gotosleep($radio, $count);
+}
+elsif ($char == 68) {	# D
+   print "DEBUG INFO:\n";
+   print "D1: $radio->{Debug1}\n";
+   print "D2: $radio->{Debug2}\n";
+   print "D3: $radio->{Debug3}\n";
+   print "\nPress Enter to Continue\n";
+   my $a = <STDIN>;
+}
+elsif ($char == 67) {   # C
+   print " Clearing Channel Cache.\n\n";
+   if (-e "$ENV{HOME}/.XM_Chan_Cache") {
+      print "-= Cache will be rebuilt next time you start the XMPCR =-\n";
+      unlink("$ENV{HOME}/.XM_Chan_Cache")
+   } else {
+      print "-= No Channel Cache Found =-\n";
+   }
+   print "\nPress Enter to Continue\n";
+   my $a = <STDIN>;
+}
+elsif ($char == 87) {	# W
+   print "\b* What's on Channel: ";
+   chomp(my $chan = <STDIN>);
+   chanInfo($radio, $chan);
+}
+elsif ($char == 88) {   # X
+   $radio->tech_info;
+
+   print "$radio->{Debug3}\n";
+   print "\n";
+   print "Signal Stat: $radio->{SigStat}\n";
+   print "Antenna Stat: $radio->{AntStat}\n";
+   print "Sat 1 Demod: $radio->{Sat1Demod}\n";
+   print "Sat 2 Demod: $radio->{Sat2Demod}\n";
+   print "Ter Demod: $radio->{TerDemod}\n";
+   print "Sat 1 TDM: $radio->{Sat1TDM}\n";
+   print "Sat 2 TDM: $radio->{Sat2TDM}\n";
+   print "Sat 1 BER: $radio->{Sat1BER}\n";
+   print "Sat 2 BER: $radio->{Sat2BER}\n";
+   print "TER Ber: $radio->{TerBER}\n";
+   print "Sat 1 AGC: $radio->{Sat1AGC}\n";
+   print "Sat 2 AGC: $radio->{Sat2AGC}\n";
+   print "Sat 1 C/N: $radio->{Sat1CN}\n";
+   print "Sat 2 C/N: $radio->{Sat2CN}\n";
+
+
+   print "\nPress Enter to Continue\n";
+   my $a = <STDIN>;
+
+}
+
+unless ($char == 81) { goto MENU; }
+
+print "Writing Out Channel Cache...\n";
+open(FH, ">$ENV{HOME}/.XM_Chan_Cache");
+foreach my $chan (keys %{$radio->{ChanList}}) {
+   print FH "$chan\n";
+}
+close(FH);
+
+print "Powering Off Radio. Please Wait...\n";
+$radio->power_off;
+
+open(FH, ">$ENV{HOME}/.XM");
+print FH "LastChannel:$radio->{CurrentChannel}\n";
+close(FH);
+
+print "\n";

@@ -1,0 +1,459 @@
+#!/usr/bin/perl
+
+# ShellXM v1.3a - Console interface used to control an XM PCR Radio.
+#
+# ShellXM Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+#
+# ShellXM is part of the OpenXM Package.
+# OpenXM Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+# OpenXM is a set of Perl scripts used to interface the XMPCR XM Radio
+# Receiver.  
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+#
+
+use strict;
+use Cwd;
+use Term::ReadKey;
+use XMPCR;
+
+my %Config = {};
+open (CONFIG, "ShellXM.cfg") || die "Unable to locate or open ShellXM.cfg\n";
+while (<CONFIG>) {
+    chomp;
+    s/#.*//;
+    s/^\s+//;
+    s/\s+$//;
+    next unless length;
+    my ($var, $value) = split(/\s*=\s*/, $_, 2);
+    $Config{lc($var)} = $value;
+}
+
+my $port = $Config{"port"};
+
+my %favorites = {};
+for (my $x = 0; $x <= 9; $x++) {
+    $favorites{$x} = $Config{"$x"};
+}
+
+my $write_cache++;
+my $is_windows;                 # Used to determine if this is a Win32 or *NIX Platform
+my $clear;                      # Used to store the command that will clear the screen
+my $pwd = cwd();                # Get the current directory
+
+if ($^O =~ /Win32/) {           # If we are on a Win32...
+    $is_windows = 1;            # Set the is_windows variable
+    $clear = "cls";             # Use 'cls' to clear the screen
+} else {
+    $is_windows = 0;            # Clear the is_windows variable
+    $clear = "clear";           # Use 'clear' to clear the screen
+}
+
+$SIG{'INT'} = \&close_down;     # Subprocess for Ctrl-C.  Catch it & run the close_down subroutine
+
+# --------------------------
+
+my $tracker = undef;		
+if ($Config{use_tracker}) { $tracker = 1; }
+
+if (defined($tracker)) {
+    require XMTracker;
+
+    $tracker = XMTracker->new(server => $Config{tracker_server},
+                                  un => $Config{tracker_username},
+                                  pw => $Config{tracker_password}
+                             );
+}
+
+# ---------------------------
+
+$|++;                           # Don't buffer output
+
+sub printMenu {                 # Menu Printing Subroutine
+    my $radio = shift;
+   
+    if (defined($tracker)) {            # If we are using the Tracker, Update it
+       $tracker->update_tracker(channel_num => $radio->{CurrentChannel},
+    	                 	     artist => $radio->{Artist},
+    			               song => $radio->{Song});
+    }
+
+    if ($is_windows) {                  # If Win32
+        system($clear);                 # Clear the Screen
+        my $title = "$radio->{Artist} : $radio->{Song}";    # Set the Title for the Shell
+        $title =~ s/\&//g;                                  # Remove any &'s (they mess with the system)
+        system("title ShellXM - $title");                   # Place title in bar
+    } else {
+        system($clear);                # If UNIX, Clear with 'clear'
+    }
+
+    print chr(218),chr(196)x32,chr(191),"\n";
+    print chr(179)," "x4,"ShellXM XMPCR Interface"," "x5,chr(179),"\n";
+    print chr(195),chr(196)x32,chr(180),"\n";
+
+    if ($radio->{StationName} =~ m/\w/) {
+        print chr(179)," Station: $radio->{StationName} ";
+        print "($radio->{CurrentChannel})",
+        " "x(19-length($radio->{StationName})-length($radio->{CurrentChannel})),
+        chr(179),"\n"; 
+    }   
+    if ($radio->{Artist} =~ m/\w/) {
+        print chr(179)," Artist:  $radio->{Artist}",
+	" "x(22-length($radio->{Artist})),chr(179),"\n";
+    }
+    if ($radio->{Song} =~ m/\w/) {
+        print chr(179)," Song:    $radio->{Song}",
+	" "x(22-length($radio->{Song})),chr(179),"\n";
+    }
+
+    print chr(195),chr(196)x32,chr(180),"\n";
+    
+    my $sat = int($radio->{SatPercent});
+    my $ter = int($radio->{TerPercent});
+    
+    print chr(179);
+    printf(" Sat:%3d%",$sat);
+    if ($radio->{Mute} eq 'On') {
+        print "   <<MUTE>>  ";
+    } else {
+        print " "x13;
+    }
+    printf(" Ter:%3d% ",$ter);
+    print chr(179),"\n";
+    print chr(192),chr(196)x32,chr(217),"\n";
+    print "Press 'H' For Help\n";
+    print "\n>";
+}
+
+# ---------------------------
+
+sub chanInfo {
+    my $radio = shift;
+    my $chan = shift;
+
+    $radio->chan_info(channel => $chan);
+
+    system($clear);
+    print chr(218),chr(196)x32,chr(191),"\n";
+    print chr(179)," "x11,"Whats On?"," "x12,chr(179),"\n";
+    print chr(195),chr(196)x32,chr(180),"\n";    
+    if ($radio->{StationName} =~ m/\w/) {
+        print chr(179)," Station: $radio->{StationName} ";
+        print "($chan)",
+        " "x(19-length($radio->{StationName})-length($chan)),
+        chr(179),"\n"; 
+    }   
+    if ($radio->{Artist} =~ m/\w/) {
+        print chr(179)," Artist:  $radio->{Artist}",
+        " "x(22-length($radio->{Artist})),chr(179),"\n";
+    }
+    if ($radio->{Song} =~ m/\w/) {
+        print chr(179)," Song:    $radio->{Song}",
+        " "x(22-length($radio->{Song})),chr(179),"\n";
+    }
+    print chr(192),chr(196)x32,chr(217),"\n";
+
+    $radio->chan_info();
+
+    print "Press Enter To Continue ";
+    my $a = <STDIN>;
+    return;
+}
+   
+# ---------------------------
+
+sub print_help {
+    my $radio = shift;
+
+    system($clear);
+    print chr(218),chr(196)x35,chr(191),"\n";
+    print chr(179),"       ShellXM Interface Help      ",chr(179),"\n";
+    print chr(195),chr(196)x35,chr(180),"\n";    
+    print chr(179)," * RadioID = $radio->{RadioID}"," "x14,chr(179),"\n";
+    print chr(179)," "x35,chr(179),"\n";
+    print chr(179)," R: Refresh Information"," "x12,chr(179),"\n";
+    print chr(179)," S: Sleep Function"," "x17,chr(179),"\n";
+    print chr(179)," W: What's On Channel..."," "x11,chr(179),"\n";
+    print chr(179)," X: Technical Specs"," "x16,chr(179),"\n";
+    print chr(179)," M: Toggle Mute"," "x20,chr(179),"\n";
+    print chr(179)," C: Rebuild Channel Cache"," "x10,chr(179),"\n"; 
+    print chr(179)," H: This Help Screen"," "x15,chr(179),"\n";
+    print chr(179)," "x35,chr(179),"\n";
+    print chr(179)," T: Tune A Station"," "x17,chr(179),"\n";
+    print chr(179)," A: Tune Station 1 Up"," "x14,chr(179),"\n";
+    print chr(179)," Z: Tune Station 1 Down"," "x12,chr(179),"\n";
+    print chr(179)," B: Tune Previous Station"," "x10,chr(179),"\n";
+    print chr(179)," "x35,chr(179),"\n";
+    print chr(179)," Q: Quit Program"," "x19,chr(179),"\n";
+    print chr(192),chr(196)x35,chr(217),"\n";
+
+    print "\nPress Enter To Return ";
+    my $a = <STDIN>;
+}
+
+# ---------------------------
+
+sub gotosleep {
+    my $radio = shift;
+    my $count = shift;
+    $|++;
+    system($clear);
+    print "\nShellXM Sleep Timer\n";
+    print "\n";
+
+    $count = $count * 60;
+
+    while ($count > 0) {
+        my $minutes = sprintf("%02d", $count/60);
+        my $seconds = sprintf("%02d", $count - ($minutes * 60));
+        print "Sleep In: $minutes:$seconds";
+        $count--;
+        sleep(1);
+        print "\b"x15;
+    }
+    
+    $radio->power_off;
+    if (defined($tracker)) {
+	$tracker->update_tracker(channel_num => "OFF");
+    }
+    print "\n";
+    exit(0);
+}
+
+# ---------------------------
+
+my $radio = XMPCR->new(port => $port);
+
+sub close_down {
+    print "Ctrl Break Caught.  Powering Down Receiver";
+    $radio->power_off;
+    if (defined($tracker)) {
+	$tracker->update_tracker(channel_num => "OFF");
+    }
+    exit(0);
+}
+
+# ---------------------------
+
+
+
+print "\n";
+print " ShellXM v1.3 - Copyright (C) 2004 Christopher J. Carlson.\n";
+print "-------------------------------------------------------------------\n";
+print "ShellXM comes with ABSOLUTELY NO WARRANTY; This is free software,\n"; 
+print "and you are welcome to redistribute it under certain conditions.\n";
+print "Please see http://www.gnu.org/licenses/gpl.txt for details.\n\n";
+
+print "Powering On XMPCR.  Please Wait...\n";
+$radio->power_on;
+
+unless ($radio->{Activated}) {
+    print "\nNote: Radio does not appear to be Activated.\n";
+    print "Call XM Radio at 1-800-XM-RADIO (1-800-967-2346)\n";
+    print "and let them know your Radio ID ($radio->{RadioID})\n";
+    print "to have your XM Radio activated.\n\n";
+    print "Press <ENTER> To Continue...";
+    my $a = <STDIN>;
+}
+
+$radio->mute_off;
+
+if (-e "$pwd/.ShellXM_Cache") {
+    open (FH, "$pwd/.ShellXM_Cache");
+    print "Loading Chanlist from Cache\n";
+    while (<FH>) {
+        chomp;
+        my ($chan, $serv) = split /:/;
+        if ($chan == 999) {
+        	$radio->{LastChan} = $serv;
+        }
+        $radio->{ChanList}->{$chan}->{Valid} = 1;
+        $radio->{ChanList}->{$chan}->{ServiceID} = $serv;
+    }
+    close(FH);
+} else {
+    print "No Cache Found. Fetching Channel Information.  Please Wait...\n";
+    $radio->get_all;
+    $radio->{LastChan} = 1;
+}
+
+unless ($radio->{LastChan}) { $radio->{LastChan} = 1; } 
+$radio->change_channel(channel => $radio->{LastChan});
+print "Changed Channel to $radio->{LastChan}\n";
+sleep 1;
+
+my $x = 0; my $old_song;
+ReadMode 4;
+
+MENU:
+
+printMenu($radio);
+
+my $char;
+ReadMode('cbreak');
+while (1) {
+    $char = ReadKey(.5);
+    last if defined $char;
+    if ($x >= 1025) { $x = 0; } else { $x++; }
+
+    unless ($x % 5) {
+        $radio->chan_info;
+	$radio->tech_info;
+        if ($old_song ne $radio->{Song}) {
+            $old_song = $radio->{Song};
+            goto MENU;
+        }
+        $old_song = $radio->{Song};
+    }
+}
+
+ReadMode 'normal';
+
+$char = ord(uc($char));
+
+if ($char == 84) {	# T
+    print "\b* Station Number: ";
+    chomp(my $station = <STDIN>);
+    unless ($radio->{ChanList}->{$station}->{Valid}) {
+        print "Channel $station is not Valid\n";
+        print "You might need to wait for Channel Load\n";
+        sleep(3);
+    } else {
+        $radio->change_channel(channel => $station);
+    }
+}
+
+elsif ($char == 82) {	# R
+    $radio->chan_info;
+    $radio->tech_info;
+}
+elsif ($char == 65) {	# A
+    $radio->channel_up;
+}
+elsif ($char == 66) {   # B
+    unless (defined($radio->{PreviousChannel})) {
+        print "No Previous Channel Defined\n";
+        sleep(3);
+    } else {
+        $radio->change_channel(channel => $radio->{PreviousChannel});
+    }
+}
+elsif ($char == 90) {	# Z
+    $radio->channel_down;
+}
+elsif ($char == 72) {	# H
+    print_help($radio);
+}
+elsif ($char == 77) {   # M
+    if ($radio->{Mute} eq 'On') {
+        $radio->mute_off;
+    } else {
+        $radio->mute_on;
+    }
+}
+
+elsif ($char == 83) {	# S
+    print "\b* How Many Minutes To Sleep: ";
+    chomp(my $count = <STDIN>);
+    print "Count: $count\n";
+    gotosleep($radio, $count);
+}
+elsif ($char == 68) {	# D
+    print "DEBUG STRINGS:\n";
+    print "D1: $radio->{Debug1}\n";
+    print "D2: $radio->{Debug2}\n";
+    print "D3: $radio->{Debug3}\n";
+    print "\nPress Enter to Continue\n";
+    my $a = <STDIN>;
+}
+elsif ($char == 67) {   # C
+    print " Clearing Channel Cache.\n\n";
+    if (-e "$pwd/.ShellXM_Cache") {
+        print "-= Cache will be rebuilt next time you start the XMPCR =-\n";
+        print "Trying to unlink $pwd/.XM_Chan_Cache\n";
+        unlink("$pwd/.ShellXM_Cache") or die "Can't Remove File! $!\n";
+    } else {
+        print "-= No Channel Cache Found =-\n";
+    }
+    $write_cache = 0;
+    print "\nPress Enter to Continue\n";
+    my $a = <STDIN>;
+}
+elsif ($char == 87) {	# W
+    print "\b* What's on Channel: ";
+    chomp(my $chan = <STDIN>);
+    chanInfo($radio, $chan);
+}
+
+elsif ($char == 88) {   # X
+    $radio->tech_info;
+
+    print "\n";
+    print "Signal Stat: $radio->{SigStat}\n";
+    print "Antenna Stat: $radio->{AntStat}\n";
+    print "Sat 1 Demod: $radio->{Sat1Demod}\n";
+    print "Sat 2 Demod: $radio->{Sat2Demod}\n";
+    print "Ter Demod: $radio->{TerDemod}\n";
+    print "Sat 1 TDM: $radio->{Sat1TDM}\n";
+    print "Sat 2 TDM: $radio->{Sat2TDM}\n";
+    print "Sat 1 BER: $radio->{Sat1BER}\n";
+    print "Sat 2 BER: $radio->{Sat2BER}\n";
+    print "Ter Ber: $radio->{TerBER}\n";
+    print "Sat AGC: $radio->{SatAGC}\n";
+    print "Ter AGC: $radio->{TerAGC}\n";
+    print "Sat 1 C/N: $radio->{Sat1CN}\n";
+    print "Sat 2 C/N: $radio->{Sat2CN}\n";
+    print "Sat %: $radio->{SatPercent}\n";
+    print "Ter %: $radio->{TerPercent}\n";
+    print "Ter SIG: $radio->{TerSig}\n";
+    print "SDEC Ver: $radio->{SDEC_Version}\n";
+    print "SDEC Date: $radio->{SDEC_Date}\n";
+    print "XMSTK Ver: $radio->{XMSTK_Version}\n";
+    print "XMSTK Date: $radio->{XMSTK_Date}\n";
+    print "\nPress Enter to Continue\n";
+    my $a = <STDIN>;
+    
+} elsif ($char >47 && $char < 59) {
+    $char -= 48;
+    if ($radio->{ChanList}->{$char}->{Valid}) {
+        $radio->change_channel(channel => $favorites{$char});
+    } else {
+        print "Channel $favorites{$char} is not Valid, Check Favorites List\n";
+        sleep(3);
+    }
+}
+
+unless ($char == 81) { goto MENU; }
+
+if ($write_cache) {
+    print "Writing Out Channel Cache...\n";
+    open(FH, ">$pwd/.ShellXM_Cache");
+    foreach my $chan (keys %{$radio->{ChanList}}) {
+        print FH "$chan:$radio->{ChanList}->{$chan}->{ServiceID}\n";
+    }
+    print FH "999:$radio->{CurrentChannel}\n";
+    close(FH);
+}
+
+print "Powering Off Radio. Please Wait...\n";
+
+$radio->power_off;
+if (defined($tracker)) {
+    $tracker->update_tracker(channel_num => "OFF");
+}
+
+print "\n";
+exit(0);

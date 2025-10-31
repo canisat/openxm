@@ -1,0 +1,431 @@
+#!/usr/bin/perl
+#
+# XMDaemon v2.01 - Daemon used to control an XM PCR Radio.
+#
+# Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+#
+# XMDaemon is part of the OpenXM Package.
+# OpenXM Copyright (C) 2003, 2004 Christopher J. Carlson <c@rlson.net>
+# OpenXM is a set of Perl scripts used to interface the XMPCR XM Radio
+# Receiver.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+# Protocol Actions Accepted:
+#
+# xmCHA:NEW:XXX - Goto Channel XXX - Returns 1/0
+# xmCHA:UP0:XXX - Go Up One Channel - Returns 1/0
+# xmCHA:DOW:XXX - Go Down One Channel - Returns 1/0
+# xmPOW:ON0:XXX - Power On - Returns 1/0
+# xmPOW:OFF:XXX - Power Off - Returns 1/0
+# xmCHA:GET:XXX - Get All - Returns 1/0
+# xmCHA:NFO:XXX - Get Channel XXX Info - Returns Channel String
+# 		  If you send 'XXX', you will get Current Channel
+# xmMUT:ON0:XXX - Turn Mute On - Returns 1/0
+# xmMUT:OFF:XXX - Turn Mute Off - Returns 1/0
+# xmPCR:DAT:XXX - Return Diagnostic Data - Returns Diagnostic String
+#
+
+use IO::Socket;
+use IO::Select;
+use Cwd;
+use XMPCR;
+use strict;
+
+my %Config = {};
+open (CONFIG, "XMDaemon.cfg") || die "Unable to locate or open XMDaemon.cfg\n";
+while (<CONFIG>) {
+    chomp;
+    s/#.*//;
+    s/^\s+//;
+    s/\s+$//;
+    next unless length;
+    my ($var, $value) = split(/\s*=\s*/, $_, 2);
+    $Config{lc($var)} = $value;
+}
+
+my $port = $Config{"port"};
+my $server_port = $Config{"server_port"};
+my $verbose = $Config{"verbose"};
+my $send_detailed_error = $Config{"send_detailed_error"};
+my @allowed_ips = split(/\s+/,$Config{allowed_ips});
+
+if ($^O =~ /Win32/) {
+    system("title XMDaemon - BETA");
+}
+
+my $daemon_running = 1;
+
+sub shutdown() {
+    print "\nCaught User Break... Stopping Server\n";
+    $SIG{INT} = 'DEFAULT';	# Just in case ...
+    
+    $daemon_running = 0;
+}
+$SIG{'INT'} = \&shutdown;
+my $pwd = cwd();
+
+$|++;
+
+my $serv_sock = IO::Socket::INET->new(  LocalAddr => inet_ntoa(INADDR_ANY),
+					LocalPort => $server_port,
+					Type 	  => SOCK_STREAM,	
+                			Listen 	  => 5,
+                			Reuse 	  => 1);
+
+die "Can't create socket for listening: $!" unless $serv_sock;
+
+print " XMDaemon v2.0 - Copyright (C) 2003, 2004 Christopher J. Carlson.\n";
+print "-------------------------------------------------------------------\n";
+print "XMDaemon comes with ABSOLUTELY NO WARRANTY; This is free software,\n"; 
+print "and you are welcome to redistribute it under certain conditions.\n";
+print "Please see http://www.gnu.org/licenses/gpl.txt for details.\n\n";
+
+print "XMDaemon Started from $pwd.  Listening on Port: $server_port\n";
+
+my $radio = XMPCR->new(port => $port);
+
+print "* Starting the XMPCR Radio Unit... Please Wait...\n";
+
+sub close_down {
+    cache_out($radio);
+
+    $radio->power_off;
+    $serv_sock->close;
+    sleep 1;	# Wait for things to calm down
+    exit(0);
+}
+
+sub get_log_time {
+    my @lt = localtime();
+    $lt[4]++; $lt[5]+=1900;
+    splice @lt, 6;
+    return sprintf("%04d-%02d-%02d %02d:%02d:%02d", reverse(@lt));
+}
+
+sub cache_out {
+    print STDERR "Entering Power Off Routine\n";
+
+    print STDERR "Writing Out Channel Cache to $ENV{PWD}/.XMDaemon_Cache...\n";
+    open(FH, ">$pwd/.XMDaemon_Cache");
+    foreach my $chan (keys %{$radio->{ChanList}}) {
+	print FH "$chan\n";
+    }
+    close(FH);
+    
+    return;
+}
+
+sub is_on {
+    my $fh = shift;
+    my %data = @_;
+    if ($radio->{State} eq "On") {
+        print STDERR "$data{ip}: ERR: Radio Already On. ($data{buf})\n";
+        if ($send_detailed_error) {
+            $fh->send("ERROR: Power Already On\n");
+        } else {
+            $fh->send("0\n");
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub is_off {
+    my $fh = shift;
+    my %data = @_;
+    if ($radio->{State} ne "On") {
+        print STDERR "$data{ip}: ERR: Can Not Issue Command When Radio is Off ($data{buf})\n";
+        if ($send_detailed_error) {
+            $fh->send("ERROR: Can Not Issue Command When Radio is Off\n");
+        } else {
+            $fh->send("0\n");
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+print "* Entering TCP/IP Loop\n";
+
+my $sel = new IO::Select($serv_sock);
+
+while($daemon_running) {
+    print ".";
+    while(my @ready = $sel->can_read(1)) {
+	foreach my $fh (@ready) {
+	    if($fh == $serv_sock) {
+		my ($client, $client_info) = $serv_sock->accept;
+		
+		#Squash Bugs.
+		next unless ($client_info);
+		
+		my $ds = get_log_time;
+		
+		my $port; my $ip;
+		eval {
+		    ($port, $ip) = unpack_sockaddr_in($client_info);
+		};
+		if ($@) {
+		    print "WARNING:  Error with unpack_sockaddr_in(\$client_info\n";
+		}
+		
+		$ip = inet_ntoa($ip);
+		print "\n$ds - $ip: Client Opening Connection\n";
+            
+	        $sel->add($client);
+	    } else {
+		my $close = 0;
+		chomp(my $buf = <$fh>);
+		
+		next unless $buf;	# Trying to nail bug.
+
+		# We are having problems here occasionally via the
+		# web page/others?
+		# Bad arg length for Socket::unpack_sockaddr_in, length is 0,
+		# should be 16 at
+		# /usr/lib/perl5/5.8.3/i386-linux-thread-multi/Socket.pm line 370,
+		#<GEN7> line 1. 
+		# Socket::sockaddr_in('undef') called at XMDaemon line 175
+		
+		my $port; my $iaddr;
+		eval {
+		    ($port, $iaddr) = sockaddr_in($fh->peername());
+		};
+		if ($@) {
+		    print "WARNING:  Error with sockaddr_in(\$fh->peername()\n";
+		}
+
+		my $ip     	   = inet_ntoa($iaddr);
+		my $ok_ip = 0;
+		$iaddr = unpack('N',$iaddr);	# Save this for later
+
+		foreach my $aip ( @allowed_ips) {
+		    my ($net, $bits) = split /\//, $aip, 2;
+		    $bits ||= 32;
+		    $net = unpack('N',inet_aton($net));
+		    my $mask = 4294967295 >> (32 - $bits); # All ones
+		    $mask = $mask << (32 - $bits);
+		    $iaddr &= 0+$mask;	# Bitwise and to mask host
+		    $net &= 0+$mask;		# ditto
+		    if ($iaddr == $net || $net == 0) {	# Allow a zero to mean anyone
+			$ok_ip++;
+			last;
+		    }
+		}
+		if ($ok_ip == 0) {
+		   print STDERR "$ip: Client Not Allowed To Connect\n";
+		   $fh->send("0\n"); $close++;
+		}
+
+		if (not defined($buf)) {
+		    print "$ip: Null Buffer Received.\n";
+		    $close++;
+		
+		} elsif (length($buf) > 13) {
+		    print STDERR "$ip: Buffer Error: Length Too Long (",length($buf),") ($buf)\n";
+		    $fh->send("0\n"); $close++;
+		
+		} elsif ($buf !~ /^xm((\w{3}:){2})\w{1,3}/) {
+		    print STDERR "$ip: Buffer Error: Incompatable Format ($buf)\n";
+		    $fh->send("0\n"); $close++;
+		}
+
+		if ($close) {
+		    my $ds = get_log_time;
+		    print "$ds - $ip: Client Closing Connection\n";
+		    $sel->remove($fh);
+		    $fh->close;
+		    last;
+		}
+		
+	        print "$ip: Passed Buffer: ($buf)\n" if $verbose;
+
+		if ($buf eq "xmPOW:ON0:XXX") {
+		    last if is_on($fh, ip => $ip, buf => $buf);
+
+		    print "$ip: Powering On Unit\n";
+		    $radio->power_on;
+		
+		    print "$ip: Tuning Last Channel $radio->{LastChan}\n";
+		    
+		    # Make last channel VALID
+		    $radio->{ChanList}->{$radio->{LastChan}}->{Valid} = 1;
+		    
+		    $radio->change_channel(channel => $radio->{LastChan});
+			
+		    if (-e "$pwd/.XMDaemon_Cache") {
+		        open (FH, "$pwd/.XMDaemon_Cache");
+		        print "$ip: Loading Chanlist from Cache\n";
+		        while (<FH>) {
+		            chomp;
+		            $radio->{ChanList}->{$_}->{Valid} = 1;
+		        }
+		    } else {
+		            print "No Cache Found. Fetching Channel Information.  Please Wait...\n";
+		            $radio->get_all;
+		    }
+
+		    $radio->get_radioID;
+		    print "RADIO_ID: $radio->{RadioID}\n";
+		    $fh->send("1\n");
+
+		} elsif ($buf eq "xmPOW:OFF:XXX") {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+
+		    cache_out;
+		    print STDERR "Turning Radio Off\n";
+		    $radio->power_off;
+		    $fh->send("1\n");
+
+		} elsif ($buf =~ /^xmCHA:NEW:/) {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+
+		    my (@data) = split(/:/,$buf,3);
+		    print "$ip: Changing Channel ($data[2])\n" if $verbose;
+
+		    eval {
+		        $radio->change_channel(channel => int($data[2]));
+		    }; if ($@) {
+		        $fh->send("0\n");
+		    } else {
+		        $fh->send("1\n");
+		    }
+
+		} elsif ($buf =~ /^xmCHA:UP0:/) {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+		    
+		    my (@data) = split(/:/,$buf,3);
+		    print "$ip: Changing Channel UP\n" if $verbose;
+		    
+		    eval {
+			$radio->channel_up;
+		    }; if ($@) {
+		        $fh->send("0\n");
+		    } else {
+		        $fh->send("1\n");
+		    }
+		    
+		} elsif ($buf =~ /^xmCHA:DOW:/) {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+		    
+		    my (@data) = split(/:/,$buf,3);
+		    print "$ip: Changing Channel DOWN\n" if $verbose;
+		    
+		    eval {
+			$radio->channel_down;
+		    }; if ($@) {
+		        $fh->send("0\n");
+		    } else {
+		        $fh->send("1\n");
+		    }
+
+
+		} elsif ($buf =~ /^xmCHA:NFO:/) {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+
+		    my (@data) = split(/:/,$buf,3);
+
+		    if ($data[2] eq "XXX") {
+		        print "Using Current Channel: $radio->{CurrentChannel}\n" if $verbose;
+		        $data[2] = $radio->{CurrentChannel};
+		    }
+
+		    print "$ip: Requesting Chan NFO ($data[2])\n" if $verbose;
+		    $radio->chan_info(channel => int($data[2]));
+
+		    print "# (SONG) $radio->{Artist} - $radio->{Song}\n" if $verbose;
+		    
+		    my $ss = "1|$buf|$radio->{State}|$radio->{Mute}|";
+		      $ss .= "$radio->{CurrentChannel}~$radio->{StationName}~$radio->{StationCategory}~$radio->{Artist}~$radio->{Song}";
+
+		    $ss =~ s/\s+,/,/g;
+
+		    $fh->send("$ss\n");
+
+		} elsif ($buf =~ /xmMUT:(\w{3}):XXX/) {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+		
+		    if ($1 eq "OFF") {
+		        if ($radio->{Mute} eq "Off") {
+		            $fh->send("0\n");
+		        } else {
+		            $radio->mute_off;
+		            $fh->send("1\n");
+		        }
+		    } elsif ($1 eq "ON0") {
+		        if ($radio->{Mute} eq "On") {
+		            $fh->send("0\n");
+			} else {
+			    $radio->mute_on;
+			    $fh->send("1\n");
+			}
+		    }
+			
+		} elsif ($buf eq "xmPCR:DAT:XXX") {
+		    # SHOULD YOU BE ABLE TO DO THIS WITH THE POWER OFF???
+		
+		    last if is_off($fh, ip => $ip, buf => $buf);
+		
+		    $radio->chan_info(channel => int($radio->{CurrentChannel}));
+                
+		    my $ss = "1|$buf|$radio->{State}|$radio->{Mute}|";
+		      $ss .= "$radio->{CurrentChannel}~$radio->{StationName}~$radio->{StationCategory}~$radio->{Artist}~$radio->{Song}";
+
+		    $ss =~ s/\s+,/,/g;
+
+		    $fh->send("$ss\n");
+		    print "Done Sending Data (xmPCR:DAT:XXX)\n";
+
+		} elsif ($buf eq "xmCHA:GET:XXX") {
+		    $radio->get_all;
+		    my $ss="1";
+		    foreach my $chan (sort {$a <=> $b} keys %{$radio->{ChanList}}) {
+			$ss = $ss . "|" . $chan;
+			$ss = $ss . "~" . $radio->{ChanList}->{$chan}->{ServiceID};
+			$ss = $ss . "~" . $radio->{ChanList}->{$chan}->{ChanName};
+			$ss = $ss . "~" . $radio->{ChanList}->{$chan}->{ChanCategory};
+			$ss = $ss . "~" . $radio->{ChanList}->{$chan}->{Artist};
+			$ss = $ss . "~" . $radio->{ChanList}->{$chan}->{SongName};
+		    }
+		    $fh->send("$ss\n");
+		    print "Done Sending Data (xmCHA:GET:XXX)\n";
+
+		} elsif ($buf eq "xmPCR:DAT:RID") {
+		    last if is_off($fh, ip => $ip, buf => $buf);
+		    $fh->send("1|$radio->{RadioID}\n");
+
+		} else { 
+		    print "Unknown Command! ($buf).  Ignoring\n";
+		}
+		
+		# SEE: http://www.perldoc.com/perl5.6/lib/IO/Select.html
+		
+		# HOW DO WE KNOW IF WE ARE DONE WITH THE SOCKET????!?!?!
+		
+		# my $ds = get_log_time;
+		# print "$ds - $ip: Client Closing Connection\n";
+		# $sel->remove($fh);
+		# $fh->close;
+		
+		next;
+	    }
+	}
+    }
+}
+
+close_down();

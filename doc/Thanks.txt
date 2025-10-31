@@ -1,0 +1,24 @@
+Thanks to the following for their support and help with
+developing OpenXM.  This project would not be where it is
+today without their contribution to this project.
+
+Developers:
+---------------------------
+Michael J. Hammel
+Bill Waggoner
+
+Contributions/Other:
+---------------------------
+Carles Carbonell Bernadó
+Paul Bournival
+David Broome
+Scott Call
+Joshua Drake
+Mark Lehmann
+Gary Mullen
+Derrick Parkhurst
+Nick Sayer
+Jon Thorson
+Andrew Timm
+Jeremy Vanderburg
+Michael Virgilio
